@@ -1,4 +1,4 @@
-playwright>=1.44
+playwright>=1.64.0
 uiautomator2>=3.0
 customtkinter>=5.2
 pillow>=10.1
