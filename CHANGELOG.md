@@ -6,7 +6,14 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Windows `.exe` / `.jar` run in the background.** The program is started inside a Windows Job Object (it and every process it starts are killed when the scan ends or SnapshotAll exits; clipboard, display settings, desktops and log-off are blocked). Its windows are made invisible and click-through, so nothing appears on screen, nothing takes focus and your mouse is never used. Controls are pressed through UI Automation patterns (mouse messages sent straight to the window as a last resort) and windows are captured with `PrintWindow`. Settings: *Show the program's window* (`--visible`) brings back the old visible mode.
+- **Android `.apk` runs without any other app.** SnapshotAll downloads its own Java runtime, Android command-line tools, emulator and an Android 14 system image once (about 2 GB, after you accept the Android SDK License), creates a virtual phone, starts it headless, explores the APK on it, uninstalls the APK and shuts the emulator down. A connected phone / emulator is still used when there is one. New: `--android-runtime`, `--accept-android-licenses`, *Automatic / My device* switch.
+- Confirmation before a program is run, with an extra warning when the file name looks like an installer or updater.
+- Tests for installer detection, blank-capture detection, runtime paths and the emulator / device choice (`tests/test_background.py`).
+
 ### Changed
+- `PRIVACY.md`: the built-in Android runtime downloads from Google and Adoptium (only when you start it).
 - CI: pushes to `develop` and pull requests to `main` now build the app and keep the installer, portable zip and checksums as downloadable artifacts (14 days). Public GitHub Releases are still published only from `main` and from version tags. Release tags follow the app version (`v1.3.N`).
 
 ## [1.4.1] - 2026-10-03

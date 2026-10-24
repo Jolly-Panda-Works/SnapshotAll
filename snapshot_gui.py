@@ -27,15 +27,17 @@ import threading
 import tkinter as tk
 import traceback
 import webbrowser
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 from PIL import Image, ImageOps
 
 import snapshot_all as sa
+import snapshot_android as sand
 import snapshot_desktop as sd
 import snapshot_gif as sgif
 import snapshot_live as slive
+import snapshot_sandbox as sbox
 from snapshot_common import APP_AUTHOR, APP_LICENSE, APP_NAME, APP_REPO, APP_URL, APP_VERSION, APP_WEBSITE
 
 # ── Dark + orange theme ─────────────────────────────────────────────
@@ -399,6 +401,8 @@ class App(ctk.CTk):
         self.serial = tk.StringVar()
         self.package = tk.StringVar()
         self.avoid = tk.StringVar(value=sa.DEFAULT_AVOID)
+        self.android_runtime = tk.StringVar(value="Automatic")   # Automatic | My device
+        self.show_window = tk.BooleanVar(value=False)            # Windows programs: visible window + real mouse
         self.save_dir = tk.StringVar(value=self.settings["save_dir"])
         self.save_png = tk.BooleanVar(value=True)
         self.make_gif = tk.BooleanVar(value=False)
@@ -788,17 +792,30 @@ class App(ctk.CTk):
                 self._field(inner, 3, 0, "Scroll steps (0 = off)", self.scroll)
                 self._field(inner, 3, 1, "Device serial (optional)", self.serial, 150)
                 self._field(inner, 3, 2, "Package name (optional)", self.package, 170)
-                note = "Connect an emulator or a phone with USB debugging before you start."
+                rt = ctk.CTkSegmentedButton(inner, values=["Automatic", "My device"], variable=self.android_runtime,
+                                            selected_color=ORANGE, selected_hover_color=ORANGE_H,
+                                            unselected_color=FIELD, unselected_hover_color=PANEL_H, fg_color=FIELD,
+                                            text_color=FG, font=self.f_body, height=38, corner_radius=10)
+                rt.grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
+                note = ("Automatic: the APK runs on a virtual phone that SnapshotAll starts in the background - "
+                        "no emulator or phone to open yourself. The first run downloads the Android runtime "
+                        "(about 2 GB, one time). A phone or emulator that is already connected is used instead "
+                        "when there is one. My device: use only a connected phone / emulator.")
             else:
                 self._section(inner, "WINDOWS", 2)
-                note = ("Uses Windows UI Automation. Launched apps are restarted for each branch; "
-                        "attached apps are explored one level deep.")
+                ctk.CTkSwitch(inner, text="Show the program's window while it is captured  (uses your mouse)",
+                              variable=self.show_window, onvalue=True, offvalue=False, progress_color=ORANGE,
+                              button_color=FG, button_hover_color=FG, fg_color=FIELD, text_color=FG,
+                              font=self.f_body).grid(row=3, column=0, columnspan=4, sticky="w", pady=(0, 10))
+                note = ("By default the program runs in the background: its windows are invisible, it can not "
+                        "take focus and your mouse is never used. Controls are pressed through Windows UI "
+                        "Automation; the program is restarted for each branch and always closed at the end.")
             ctk.CTkLabel(inner, text=note, font=self.f_small, text_color=MUTED, anchor="w", justify="left",
-                         wraplength=640).grid(row=4, column=0, columnspan=4, sticky="w", pady=(0, 12))
-            self._section(inner, "SAFETY", 5)
+                         wraplength=640).grid(row=5, column=0, columnspan=4, sticky="w", pady=(0, 12))
+            self._section(inner, "SAFETY", 6)
             ctk.CTkLabel(inner, text="Never tap / click buttons matching (regex)", font=self.f_small,
-                         text_color=MUTED).grid(row=6, column=0, columnspan=4, sticky="w")
-            self._entry(inner, self.avoid).grid(row=7, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+                         text_color=MUTED).grid(row=7, column=0, columnspan=4, sticky="w")
+            self._entry(inner, self.avoid).grid(row=8, column=0, columnspan=4, sticky="ew", pady=(4, 0))
         inner.grid_columnconfigure(3, weight=1)
 
     def _sync_viewport(self):
@@ -880,8 +897,42 @@ class App(ctk.CTk):
         self.stop_btn.grid()
         self.next_btn.configure(state="disabled")
 
+    def _confirm_run(self, mode, target):
+        """Ask before a program is run on this PC. Returns (go_ahead, accept_android_licenses)."""
+        if mode == "desktop" and not target:                      # attaching to a program that is already running
+            return True, False
+        if mode == "desktop":
+            extra = ""
+            if sbox.looks_like_installer(target):
+                extra = ("\n\nThe file name looks like an INSTALLER or UPDATER. Running it can install, change or "
+                         "remove software on this PC - the background mode does not prevent that.")
+            return messagebox.askyesno(
+                "Run this program?",
+                "SnapshotAll will run this program on your PC, in the background, to capture its windows. "
+                "It is closed again at the end.\n\nThe program still runs with your user rights, so only use "
+                f"files you trust.{extra}\n\nContinue?", icon="warning", parent=self), False
+        if self.android_runtime.get() == "My device":
+            return True, False
+        missing = sand.Paths().missing()
+        if not missing:
+            return True, True
+        ok = messagebox.askyesno(
+            "Download the Android runtime?",
+            "To run the APK without any other app, SnapshotAll sets up its own virtual phone. This is a one-time "
+            "download of about 2 GB:\n\n  - " + "\n  - ".join(missing) + "\n\nIt is stored in your user folder "
+            f"and used only by SnapshotAll. By continuing you accept the Android SDK License:\n{sand.LICENSE_URL}"
+            "\n\nThe emulator needs hardware virtualisation (Windows Hypervisor Platform).\n\nContinue?",
+            parent=self)
+        return ok, ok
+
     def start_scan(self):
         mode, target, label = self.job
+        if mode != "web":
+            go_ahead, accept_licenses = self._confirm_run(mode, target)
+            if not go_ahead:
+                return
+        else:
+            accept_licenses = False
         self._cleanup_temp()
         self.temp = Path(tempfile.mkdtemp(prefix="snapshotall_"))
         is_web = mode == "web"
@@ -897,6 +948,8 @@ class App(ctk.CTk):
             max_screens=self.limit, max_clicks=self._num(self.max_clicks, 25, lo=1), scroll=self._num(self.scroll, 3),
             serial=self.serial.get().strip() or None, package=self.package.get().strip() or None,
             avoid=self.avoid.get().strip(), attach=label if (mode == "desktop" and not target) else None,
+            android_runtime="device" if self.android_runtime.get() == "My device" else "auto",
+            accept_android_licenses=accept_licenses, visible=self.show_window.get(),
             on_item=self._on_item,
         )
         runner = {"web": sa.run_web, "apk": sa.run_apk, "desktop": sd.run_desktop}[mode]

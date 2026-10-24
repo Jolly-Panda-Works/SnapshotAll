@@ -24,7 +24,7 @@ jobs:
       - name: Unit tests (GIF flows)
         run: |
           pip install pillow pytest
-          python -m pytest tests/test_flows.py tests/test_version.py -q
+          python -m pytest tests/test_flows.py tests/test_version.py tests/test_background.py -q
   browser-tests:
     runs-on: ubuntu-latest
     steps:

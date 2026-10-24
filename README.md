@@ -86,8 +86,8 @@ The app has a modern dark-and-orange interface with a toolbar (**New capture**, 
 - Uses **Microsoft Edge / Google Chrome** if installed (no download); otherwise downloads Chromium once.
 
 ### App
-- **Android `.apk`** — installs the app on an emulator or USB phone, taps through the UI and captures every unique screen (with optional scrolling).
-- **Windows `.exe` / `.jar`** — launches the program (or attaches to a running window by title) and uses Windows UI Automation to click buttons, tabs, menu items and links, capturing every new window state and dialog.
+- **Android `.apk`** — runs the app on a **built-in virtual phone that SnapshotAll starts in the background** (no window, no Android Studio, no phone), taps through the UI and captures every unique screen (with optional scrolling). A phone or emulator that is already connected is used instead when there is one. The first run downloads the Android runtime once (about 2 GB).
+- **Windows `.exe` / `.jar`** — runs the program **in the background**: its windows are invisible and click-through, your mouse and keyboard are never used, and the program is killed (with everything it started) when the scan ends. Buttons, tabs, menu items and links are pressed through Windows UI Automation and every new window state and dialog is captured with `PrintWindow`. You can still attach to a running window by title, or turn the window on in Settings (**Show the program's window**).
 - Risky buttons (`delete`, `logout`, `pay`, `exit`, `save`, …) are skipped by default — configurable in Settings.
 
 ## GIF flows
@@ -169,8 +169,11 @@ python snapshot_all.py --attach "Untitled - Notepad"
 | `--max-clicks` | apps | `25` | Max tappable elements tried per screen |
 | `--avoid` | apps | see source | Regex of button labels that must never be tapped |
 | `--scroll` | apk | `3` | Scroll steps captured per screen (`0` = off) |
+| `--android-runtime` | apk | `auto` | `auto` = connected device if any, otherwise the built-in headless emulator; `emulator` = always the built-in one; `device` = only a connected device |
+| `--accept-android-licenses` | apk | off | Accept the [Android SDK License](https://developer.android.com/studio/terms) so the built-in emulator can be downloaded |
 | `--serial`, `--package` | apk | auto | `adb` device serial / app package name |
 | `--attach` | desktop | – | Attach to a running window whose title matches this regex |
+| `--visible` | desktop | off | Show the program's window and use the real mouse instead of running it in the background |
 
 ### Pages behind a login (website)
 
@@ -200,8 +203,14 @@ On Windows you can also double-click `run_gui.bat` — it creates a virtual envi
 
 ### APK requirements
 
-- `adb` (Android Platform-Tools) in your `PATH` — or the copy bundled with `adbutils`, which SnapshotAll uses automatically.
-- An Android emulator (e.g. Android Studio AVD) or a phone with **USB debugging** enabled, visible in `adb devices`.
+Nothing to install. On the first APK scan SnapshotAll asks once, then downloads into `%LOCALAPPDATA%\SnapshotAll\android` a small Java runtime (Eclipse Temurin), Google's Android command-line tools, platform-tools, the emulator and one Android 14 system image (about 2 GB), and creates a virtual phone.
+
+- The emulator needs **hardware virtualisation**: turn on Intel VT-x / AMD-V in the BIOS and enable the Windows feature **Windows Hypervisor Platform**.
+- Prefer your own phone or emulator? Choose **My device** in Settings (or `--android-runtime device`); then `adb` must be in your `PATH` (or the copy bundled with `adbutils`) and the device must be visible in `adb devices`.
+
+### Running programs safely
+
+Capturing a `.exe` / `.jar` **runs it on your PC**. Background mode keeps it invisible, stops it from using the clipboard, changing display settings or logging you off, and kills it with all its child processes at the end - but it is containment, **not a security sandbox**: the program still runs with your user rights. Only capture programs you trust, and never an installer or updater (SnapshotAll warns when a file name looks like one). For untrusted files use a virtual machine or Windows Sandbox.
 
 ## Build the installer yourself
 
@@ -245,7 +254,9 @@ SnapshotAll/
 | Problem | Fix |
 |---|---|
 | "No usable browser found" | SnapshotAll downloads Chromium automatically (internet required). Or install Microsoft Edge / Google Chrome. |
-| `adb not found` / no device | Start an emulator or connect a phone with USB debugging; check `adb devices`. |
+| "no hardware virtualisation" (APK) | Turn on VT-x / AMD-V in the BIOS and enable *Windows Hypervisor Platform*, then restart. |
+| `adb not found` / no device (**My device**) | Start an emulator or connect a phone with USB debugging; check `adb devices`. |
+| Windows app: the window is blank in the screenshot | Some GPU-drawn programs can't be painted while invisible. Turn on **Show the program's window** in Settings. |
 | Windows app: nothing captured | Use **Attach**: start the app yourself, then enter part of its window title. |
 | "Windows protected your PC" | Click **More info → Run anyway**. See [CODE_SIGNING.md](CODE_SIGNING.md). |
 | Ctrl+V doesn't paste | Right-click the field → Paste, or use the **Paste** button. |

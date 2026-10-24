@@ -20,6 +20,7 @@ import argparse
 import functools
 import hashlib
 import http.server
+import os
 import re
 import shutil
 import socketserver
@@ -282,19 +283,61 @@ def run_web(target, out: Path, a):
 
 # ───────────────────────────── APK ─────────────────────────────
 
+def _find_adb():
+    """adb from PATH, or the copy that ships with adbutils; None when neither exists."""
+    found = shutil.which("adb")
+    if found:
+        return found
+    try:
+        import adbutils  # installed together with uiautomator2, ships an adb binary
+        return adbutils.adb_path()
+    except Exception:
+        return None
+
+
+def _device_connected(adb_bin, serial=None):
+    try:
+        out = subprocess.run([adb_bin, "devices"], capture_output=True, text=True, timeout=30).stdout
+    except Exception:
+        return False
+    ready = [ln.split("\t")[0] for ln in out.splitlines()[1:] if ln.strip().endswith("\tdevice")]
+    return (serial in ready) if serial else bool(ready)
+
+
 def run_apk(apk, out: Path, a):
+    """Capture an APK. By default it runs on a built-in headless emulator that SnapshotAll sets up itself;
+    a phone / emulator that is already connected is used when there is one (``--android-runtime``)."""
+    runtime = getattr(a, "android_runtime", "auto")        # auto | emulator | device
+    adb_bin = _find_adb()
+    emu, pkg, old_serial = None, None, a.serial
+    use_builtin = runtime == "emulator" or (runtime == "auto" and not (adb_bin and _device_connected(adb_bin, a.serial)))
+    if use_builtin:
+        import snapshot_android as sand
+        try:
+            emu, adb_bin = sand.start_builtin_emulator(getattr(a, "accept_android_licenses", False))
+        except sand.AndroidRuntimeError as e:
+            sys.exit(str(e))
+        a.serial = emu.serial
+        os.environ["ADBUTILS_ADB_PATH"] = adb_bin
+    try:
+        pkg = _run_apk_on_device(apk, out, a, adb_bin)
+    finally:
+        if emu is not None:
+            if pkg:                                     # leave the virtual phone clean for the next run
+                subprocess.run([adb_bin, "-s", emu.serial, "uninstall", pkg], capture_output=True)
+            emu.stop()
+            a.serial = old_serial
+
+
+def _run_apk_on_device(apk, out: Path, a, adb_bin):
     try:
         import uiautomator2 as u2
     except ImportError:
         sys.exit("Missing dependency. Install it with: pip install uiautomator2")
 
-    adb_bin = shutil.which("adb")
     if not adb_bin:
-        try:
-            import adbutils  # installed together with uiautomator2, ships an adb binary
-            adb_bin = adbutils.adb_path()
-        except Exception:
-            sys.exit("adb not found. Install Android Platform-Tools and add it to PATH.")
+        sys.exit("adb not found. Install Android Platform-Tools and add it to PATH, "
+                 "or use the built-in emulator (--android-runtime emulator).")
 
     def adb(*args):
         cmd = [adb_bin] + (["-s", a.serial] if a.serial else []) + list(args)
@@ -319,7 +362,10 @@ def run_apk(apk, out: Path, a):
                 o = subprocess.run(["aapt", "dump", "badging", apk], capture_output=True, text=True).stdout
                 pkg = re.search(r"package: name='([^']+)'", o).group(1)
             except Exception:
-                sys.exit("Could not detect the package name. Set it manually (Package field / --package).")
+                if len(after) == 1:                     # only one third-party app is installed: that is it
+                    pkg = next(iter(after)).replace("package:", "")
+                else:
+                    sys.exit("Could not detect the package name. Set it manually (Package field / --package).")
     print(f"Package: {pkg}")
 
     d = u2.connect(a.serial) if a.serial else u2.connect()
@@ -390,6 +436,7 @@ def run_apk(apk, out: Path, a):
                 queue.append(path + [(x, y, lb)])
 
     print(f"\nDone: {shots} screen(s) captured")
+    return pkg
 
 
 # ───────────────────────────── CLI ─────────────────────────────
@@ -439,9 +486,19 @@ def main():
     ap.add_argument("--max-clicks", type=int, default=25, help="max tappable elements tried per screen")
     ap.add_argument("--avoid", default=DEFAULT_AVOID, help="regex of button labels that must never be tapped")
     ap.add_argument("--scroll", type=int, default=3, help="[apk] scroll steps captured per screen (0 = off)")
+    ap.add_argument("--android-runtime", choices=["auto", "emulator", "device"], default="auto",
+                    help="[apk] auto = a connected phone/emulator if there is one, otherwise SnapshotAll's built-in "
+                         "headless emulator (downloaded once, about 2 GB); emulator = always the built-in one; "
+                         "device = only an already connected device")
+    ap.add_argument("--accept-android-licenses", action="store_true",
+                    help="[apk] accept the Android SDK License (https://developer.android.com/studio/terms) "
+                         "so the built-in emulator can be downloaded")
     ap.add_argument("--serial", help="[apk] adb device serial")
     ap.add_argument("--package", help="[apk] app package name (optional)")
     ap.add_argument("--attach", help="[desktop] attach to a running window whose title matches this regex")
+    ap.add_argument("--visible", action="store_true",
+                    help="[desktop] show the program's window and use the real mouse (default: run it in the "
+                         "background, invisible, without touching your mouse)")
     a = ap.parse_args()
 
     mode = a.mode if a.mode != "auto" else ("desktop" if (a.attach and not a.target) else detect_mode(a.target))
